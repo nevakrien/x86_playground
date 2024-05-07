@@ -1,66 +1,93 @@
-;basic example from chatgpt
 section .data
     prompt db "Enter input: ", 0
     prompt_len equ $ - prompt
-    overflow_msg db "Warning: Potential buffer overflow detected.", 0xA, 0
+    overflow_msg db "ERROR: input too large", 0xA, 0
     overflow_msg_len equ $ - overflow_msg
+    input_cap equ 4096
+
+    malloc_fail_msg db "went OOM...", 0xA, 0
+    malloc_fail_msg_len equ $ - malloc_fail_msg
+
+section .bss
+    input resb input_cap  ; Reserve buffer for input
 
 section .text
+    extern malloc
+    extern free
+    extern memcpy
     global _start
 
 _start:
-    ; Allocate memory on the heap using brk system call
-    mov eax, 45           ; sys_brk
-    mov ebx, 0            ; get current break location
-    int 0x80
-    mov ebx, eax          ; store current break in ebx
-    add ebx, 256          ; request an increase by 256 bytes
-    mov eax, 45           ; sys_brk
-    mov ecx, ebx          ; set the new break
-    int 0x80
-    mov [heap_space], eax ; store new break location
-
+;r12 holds size of malloced memory
+;r13 holds a pointer to that memory
+main_loop:
     ; Write a prompt to stdout
-    mov eax, 4            ; sys_write
-    mov ebx, 1            ; stdout
-    mov ecx, prompt       ; message to print
-    mov edx, prompt_len   ; message length
-    int 0x80
+    mov rdi, 1              ; stdout
+    mov rax, 1              ; sys_write
+    mov rsi, prompt         ; message to print
+    mov rdx, prompt_len     ; message length
+    syscall
 
-    ; Read from stdin into heap allocated space
-    mov eax, 3            ; sys_read
-    mov ebx, 0            ; stdin
-    mov ecx, [heap_space] ; buffer to store input
-    mov edx, 255          ; number of bytes to read
-    int 0x80
-    mov [input_len], eax  ; save the length of the input
+    ; Read from stdin into input
+    mov rax, 0              ; system call number for sys_read
+    mov rdi, 0              ; file descriptor 0 is stdin
+    mov rsi, input          ; buffer to store input
+    mov rdx, input_cap      ; number of bytes to read
+    syscall
 
-    ; Check for buffer overflow (if the last character is not null)
-    mov eax, [heap_space]
-    add eax, 254          ; address of the last byte in the buffer
-    cmp byte [eax], 0     ; compare last byte to null
-    jz no_overflow
+    ; Overflow check
+    cmp rax, input_cap
+    je say_overflow
+    
+    ; Save input size so we can use later
+    mov r12, rax
 
-    ; Output overflow warning message
-    mov eax, 4            ; sys_write
-    mov ebx, 1            ; stdout
-    mov ecx, overflow_msg ; warning message to print
-    mov edx, overflow_msg_len ; message length
-    int 0x80
-
-no_overflow:
     ; Output the received input
-    mov eax, 4            ; sys_write
-    mov ebx, 1            ; stdout
-    mov ecx, [heap_space] ; buffer to write from
-    mov edx, [input_len]  ; number of bytes to write
-    int 0x80
+    mov rdx, rax            ; number of bytes to write
+    mov rax, 1              ; write
+    mov rdi, 1              ; stdout
+    syscall
+    
+    ; Get memory
+    mov rdi, rbx
+    call malloc
+    test rax, rax           ; Check if malloc failed (rax == 0)
+    jz allocation_failed
+    
+    mov r13, rax
 
+    ; Perform memory copy
+    mov rdi, rax            ;dest
+    mov rsi, input          ; Source buffer
+    mov rdx, r12            ; Number of bytes to copy
+    call memcpy
+
+    jmp main_loop
+
+say_overflow:
+    ; Empty out all of stdin
+    mov rax, 0
+    syscall
+    cmp rax, input_cap
+    je say_overflow
+
+    ; Print overflow message
+    mov rax, 1
+    mov rdi, 1
+    mov rsi, overflow_msg
+    mov rdx, overflow_msg_len
+    syscall
+
+    jmp _start
+
+allocation_failed:
+    mov rax, 1              ; sys_write
+    mov rsi, malloc_fail_msg       ; message to print
+    mov rdx, malloc_fail_msg_len   ; message length
+    syscall
+
+exit:
     ; Exit the program
-    mov eax, 1            ; sys_exit
-    xor ebx, ebx          ; status 0
-    int 0x80
-
-section .bss
-    heap_space resd 1      ; Reserve space for heap memory address
-    input_len resd 1       ; Reserve space for input length
+    mov rax, 60             ; system call number for sys_exit
+    xor rdi, rdi            ; exit status 0
+    syscall
