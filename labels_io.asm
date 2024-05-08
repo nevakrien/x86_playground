@@ -1,5 +1,5 @@
 section .data
-    prompt db "Enter input: ", 0
+    prompt db 0xA, "Enter input: ", 0
     prompt_len equ $ - prompt
     overflow_msg db "ERROR: input too large", 0xA, 0
     overflow_msg_len equ $ - overflow_msg
@@ -7,6 +7,10 @@ section .data
 
     malloc_fail_msg db "went OOM...", 0xA, 0
     malloc_fail_msg_len equ $ - malloc_fail_msg
+
+    arow_str db " -> ", 0
+    arow_str_len equ $ - arow_str
+
 
 section .bss
     input resb input_cap  ; Reserve buffer for input
@@ -20,7 +24,37 @@ section .text
 _start:
 ;r12 holds size of malloced memory
 ;r13 holds a pointer to that memory
+mov r12,0
+mov r13,0
+
+align 16
 main_loop:
+    ;show existing stuff
+    mov r14,r13 
+show_loop:
+    test r14,r14
+    je IO
+
+
+    mov rdi, 1              ; stdout
+    mov rax, 1              ; sys_write
+    lea rsi, [r14 + 16]  ; message to print
+    mov rdx, [r14 + 8]      ; message length
+    sub rdx,1
+    syscall
+
+
+    mov rdi, 1              ; stdout
+    mov rax, 1              ; sys_write
+    mov rsi, arow_str         ; message to print
+    mov rdx, arow_str_len     ; message length
+    syscall
+
+    mov r14,[r14] ;h=h->bext
+
+    jmp show_loop
+
+IO:
     ; Write a prompt to stdout
     mov rdi, 1              ; stdout
     mov rax, 1              ; sys_write
@@ -42,22 +76,25 @@ main_loop:
     ; Save input size so we can use later
     mov r12, rax
 
-    ; Output the received input
-    mov rdx, rax            ; number of bytes to write
-    mov rax, 1              ; write
-    mov rdi, 1              ; stdout
-    syscall
+    ; ; Output the received input
+    ; mov rdx, rax            ; number of bytes to write
+    ; mov rax, 1              ; write
+    ; mov rdi, 1              ; stdout
+    ; syscall
     
     ; Get memory
-    mov rdi, rbx
+    lea rdi, [r12 + 16]
     call malloc
     test rax, rax           ; Check if malloc failed (rax == 0)
     jz allocation_failed
     
+    ;append to the list
+    mov [rax], r13 ;h->next=old_h
+    mov [rax+8], r12 ;h->size=size
     mov r13, rax
 
     ; Perform memory copy
-    mov rdi, rax            ;dest
+    lea rdi, [rax+16]            ;dest
     mov rsi, input          ; Source buffer
     mov rdx, r12            ; Number of bytes to copy
     call memcpy
